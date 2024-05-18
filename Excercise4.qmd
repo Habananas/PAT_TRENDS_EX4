@@ -117,25 +117,7 @@ library("gitcreds")
 library(XML) #to read the XML data of "activities/11103101530.gpx" files
 library(leaflet) #to show in a map
 
-gpx_parsed <- htmlTreeParse(file = "activities/11103101530.gpx", useInternalNodes = TRUE)
-
-coords <- xpathSApply(doc = gpx_parsed, path = "//trkpt", fun = xmlAttrs)
-elevation <- xpathSApply(doc = gpx_parsed, path = "//trkpt/ele", fun = xmlValue)
-
-df <- data.frame(
-  lat = as.numeric(coords["lat", ]),
-  lon = as.numeric(coords["lon", ]),
-  elevation = as.numeric(elevation)
-)
-
-
-
-
-plot(x = df_coords$lon, y = df_coords$lat, type = "l", col = "black", lwd = 3,
-     xlab = "Longitude", ylab = "Latitude")
-
-px_parsed <- htmlTreeParse(file = "activities/11103101530.gpx", useInternalNodes = TRUE)
-gpx_parsed
+gpx_parsed <- htmlTreeParse(file = "activities/11239313364.gpx", useInternalNodes = TRUE)
 
 coords <- xpathSApply(doc = gpx_parsed, path = "//trkpt", fun = xmlAttrs)
 elevation <- xpathSApply(doc = gpx_parsed, path = "//trkpt/ele", fun = xmlValue)
@@ -181,13 +163,9 @@ ggplot(df, aes(X,Y))+
   geom_point()
 ```
 
+### define temporal window
 ```{r}
-distance_by_element <- function(later, now) {
-  as.numeric(
-    st_distance(later, now, by_element = TRUE)
-  )
-}
-
+#this step mean is given in m/20 seconds. 
 #define temporal window of 20 secs, partition in 5 sec steps 
 #1 time behind, two time behind, (lag) one time ahead, two times ahead  (lead)
 df <- df |>
@@ -197,49 +175,132 @@ df <- df |>
         nPlus5  = distance_by_element(geometry, lead(geometry, 5)), # distance to pos +5 seconds
         nPlus10  = distance_by_element(geometry, lead(geometry, 10))  # distance to pos +10 seconds
     )
-```
-remove static points: 
-```{r}
+
+#now we add the column stepMean to the DF
 df <- df |>
     rowwise() |>
     mutate(
-        stepMean = mean(c(nMinus2, nMinus1, nPlus1, nPlus2))
+        stepMean = mean(c(nMinus10, nMinus5, nPlus5, nPlus10))
     ) |>
     ungroup()
-
+```
+## remove static points: 
+```{r}
+#here we define the boolean "static" (if we move within a step mean or not)
 df <- df |>
     mutate(static = stepMean < mean(stepMean, na.rm = TRUE))
-# here the mean(stepMean)calculates all the stepMeans from Sabi, and then compares the current stepMean to it 
+# here the mean(stepMean) calculates all the stepMeans, and then compares the current stepMean to it 
 
 df_filter <- df |>
     filter(!static)
-
-df_filter |>
-    ggplot(aes(X, Y)) +
-    geom_path() +
-    geom_point() +
-    coord_fixed() +
-    theme(legend.position = "bottom")
-df_filter
+# here, we filter out all the stepMeans that are below the mean of the StepMean
 
 ```
-
 ## Task 2: Specify and apply threshold d
+
+Die punkte, an denen ich mich in 20 sekunden (step mean) weniger bewegt habe als im gesamten StepMean (gsamtes Stepmean= durchschnitt von allen 4er - Distanzen 
+
+After calculating the Euclidean distances to positions within the temporal window v in task 1, you can explore these values (we stored them in the column stepMean) using summary statistics (histograms, boxplot, summary()): This way we can define a reasonable threshold value to differentiate between stops and moves. There is no “correct” way of doing this, specifying a threshold always depends on data as well as the question that needs to be answered. *In this exercise, use the mean of all stepMean values.*
+Store the new information (boolean to differentiate between stops (TRUE) and moves (FALSE)) in a new column named static.
 ```{r}
+# we already did this in the step before and will now compare the hists and boxplots.
+#summary()
+summary(df)
+summary(df_filter)
+#here we can see, that thje min stepMean stepMean 13.22, max stepMean 48,27 (m/?)
+
+#boxplot
+par(mfrow=c(1,2))
+boxplot(df$stepMean)
+boxplot(df_filter$stepMean)
+# it is interesting to observe the two boxplots, as the filtered one shows the outliers more clearly as such. also, the quartiles are smaller, meaning it is closer to the actual mean speed than the non filtered one. 
+#ACHTUNG - this is stepMean, not actual velocity in km/h - might be calculated from it in a later step?
+
+#histograms
+hist(df$stepMean)
+hist(df_filter$stepMean)
+#here we can see that most of the time I had a StepMean of 20, meaning 20m/20 seconds 
+
 
 ```
 
 ## Task 3: Visualize segmented trajectories
+Now visualize the segmented trajectory spatially. Just like last week, you can use ggplot with geom_path(), geom_point() and coord_equal(). Assign colour = static within aes() to distinguish between segments with “movement” and without.
 ```{r}
+# jetzt plotten wir das 
+df_omit <- na.omit(df) #damit nicht überall unübersichtliche Lines rum
+df_omit |>
+    ggplot(aes(X, Y, color=static)) +
+    geom_path() +
+    geom_point() +
+    coord_fixed() +
+    theme(legend.position = "bottom")
 
+df <- df_omit
+#looks ok, but I dont understand why there are these lines between the TRUE and NA (after, I ommited them) that make it hard to interpret the graphic.^
 ```
 
 
 ## Task 4: Segment-based analysis
+In applying Laube and Purves (2011), we’ve come as far as step b) in Figure 14.1. In order to complete the last steps (c and d), we need a unique ID for each segment that we can use as a grouping variable. The following function does just that (it assigns unique IDs based on the column static which you created in Task 2). You will learn about functions next week. For now, just copy the following code chunk into your script and run it.
+
+You can use the newly created function rle_id to assign unique IDs to subtrajectories (as shown below). Visualize the moving segments by colourizing them by segment_ID. Then use segment_ID as a grouping variable to determine the segments duration and remove short segments (e.g. segments with a duration < 5 Minutes)
+
+--> I dont understand why we should remove short segments - we only have to remove the ones that say "TRUE", meaning that we stood in the same place, no? Why bc otherwise, if I did a lot of stop & go (e.g. traffic jam) and I remove the trajectory segments where I move less than 5 min in a row, then nothing stays?
 ```{r}
+rle_id <- function(vec) {
+    x <- rle(vec)$lengths
+    as.factor(rep(seq_along(x), times = x))
+}
+df <- df |>
+    mutate(segment_id = rle_id(static))
+
+df |>
+    ggplot(aes(X, Y, color=segment_id)) +
+    geom_path() +
+    geom_point() +
+    coord_fixed() +
+    theme(legend.position = "bottom")
+
+summary(df)
+#segment ID seems to not be numeric 
+#therefore, first make the column a numeric column 
+df$segment_id <- as.numeric(df$segment_id)
+summary(df)
+
+
+
+#define the length of the segments
+df <- df %>%
+  group_by(segment_id) %>%
+  mutate(segment_length = n()) %>%
+  ungroup()
+
+
+library(dplyr)
+#seems that first we need to adapt our time format:
+df$timestamp <- as.POSIXct(df$timestamp, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
+
+# here, we makeuse of the difftime function, with substractimng the beginning and end of the segment, thus calculating the length, and then checking wether it is longer than 1 min. For all segments that are shorter than this, we remove them from the calculus. (however I dont think this makes sense at all, why should we remove tracks that are shorter than one minute?)
+df <- df %>%
+  group_by(segment_id) %>%
+  mutate(duration = difftime(max(timestamp), min(timestamp), units = "secs"),
+         duration_less_than_60s = as.logical(duration < 60)) %>%
+  ungroup()
+
+df_filter1 <- df1 %>%
+  filter(!duration_less_than_60s)
+
+x_segment_lengths <- merge(segment_lengths, df[c("segment_id", "X")], by = "segment_id")
+
+new_segment_length |>
+    ggplot(aes(X, Y, color=segment_id)) +
+    geom_path() +
+    geom_point() +
+    coord_fixed() +
+    theme(legend.position = "bottom")
 
 ```
-
 
 ## Task 5: Similarity measures (pedestrian)
 ```{r}
