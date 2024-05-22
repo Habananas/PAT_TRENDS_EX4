@@ -416,10 +416,10 @@ library(SimilarityMeasures)
 
 # pointSpacing : An integer value of the maximum index difference between trajectory1 and trajectory2 allowed in the calculation. A negative value sets the point spacing to unlimited.
 DTW(traj1, traj2, pointSpacing=-1)
-DTW(traj2, traj3, pointSpacing=-1)
-DTW(traj3, traj4, pointSpacing=-1)
-DTW(traj4, traj5, pointSpacing=-1)
-DTW(traj5, traj6, pointSpacing=-1)
+DTW(traj1, traj3, pointSpacing=-1)
+DTW(traj1, traj4, pointSpacing=-1)
+DTW(traj1, traj5, pointSpacing=-1)
+DTW(traj1, traj6, pointSpacing=-1)
 
 #question: what does it mean, maximum index difference, and how is it different to the max distance in Edit Dist?
 ```
@@ -429,8 +429,6 @@ As for similarity measures specifically designed to compare multiple trajectorie
 1. Longest Common Subsequence (LCSS) 
 2. Edit Distance on Real Sequence (EDR) 
 3. Edit Distance with Real Penalty (ERP) 
-
-
 ### automatisation ABORT!!! 
 dont use this, it aborts the whole session. But how is it then possible to store the values in the matrix?
 ```{r}
@@ -463,30 +461,57 @@ print(similarity_matrix)
 
 ```
 
-
-
 ### EditDist
 ```{r}
 # pointDistance: A floating point number representing the maximum distance in each dimension allowed for points to be considered equivalent.
 EditDist(traj1, traj2, pointDistance=20)
-EditDist(traj2, traj3, pointDistance=20)
-EditDist(traj3, traj4, pointDistance=20)
-EditDist(traj4, traj5, pointDistance=20)
-EditDist(traj5, traj6, pointDistance=20)
-EditDist(traj6, traj2, pointDistance=20)
-
+EditDist(traj1, traj3, pointDistance=20)
+EditDist(traj1, traj4, pointDistance=20)
+EditDist(traj1, traj5, pointDistance=20)
+EditDist(traj1, traj6, pointDistance=20)
+EditDist(traj1, traj2, pointDistance=20)
 
 ```
 ### Frechet
 ```{r}
-
+Frechet(traj1, traj2, testLeash=-1)
+Frechet(traj1, traj3, testLeash=-1)
+Frechet(traj1, traj4, testLeash=-1)
+Frechet(traj1, traj5, testLeash=-1)
+Frechet(traj1, traj6, testLeash=-1)
 ```
+### LCSS
+LCSStakes very long to compute. The accuracy of the algorithm (pointSpacing = ,pointDistance = and errorMarg =) can be varied to provide faster calculations. Please see Vlachos, Gunopoulos, and Kollios (2002) for more information.
 
-
-Before visualizing your results think about the following: Which two trajectories to you percieve to be most similar, which are most dissimilar? Now visualize the results from the computed similarity measures. Which measure reflects your own intuition the closest?
 ```{r}
+LCSS(traj1, traj2, pointSpacing=20, pointDistance=20, errorMarg=5, returnTrans=FALSE)
+LCSS(traj1, traj3, pointSpacing=20, pointDistance=20, errorMarg=5, returnTrans=FALSE)
+LCSS(traj1, traj4, pointSpacing=20, pointDistance=20, errorMarg=5, returnTrans=FALSE)
+LCSS(traj1, traj5, pointSpacing=20, pointDistance=20, errorMarg=5, returnTrans=FALSE)
+LCSS(traj1, traj6, pointSpacing=20, pointDistance=20, errorMarg=5, returnTrans=FALSE)
 
 ```
+
+Before visualizing your results think about the following: Which two trajectories to you percieve to be most similar, which are most dissimilar? 
+We have the comparison of Traj1 with 5 other Trajs. If the value of traj1-Traj2 is lower than Traj1-Traj3 this means that the Traj2 is more similar to Traj1 than Traj3 to Traj1. 
+Interestingly, IN DTW and Frechet, Traj2 and Traj6 seem to be the most similar ones, while in LCSS Traj3 seems to be the similar one. 
+
+Now visualize the results from the computed similarity measures. Which measure reflects your own intuition the closest?
+```{r}
+similarity <- read_delim("similarity_long.csv", ";")
+
+library(ggplot2)
+library(tidyr)
+
+
+ggplot(similarity_long, aes(x = Compare, y = Value, fill=Compare)) +
+  geom_col()+
+   facet_wrap(~ Type, scales = "free")+
+  labs(x = "Compare", y = "Value") 
+
+```
+My LCSS looks different than the one in the Ex, as I had a different ErrorMarg and also point distance and spacing. That also changes the pattern quite a lot. 
+What do these values actually tell us?
 
 
 
