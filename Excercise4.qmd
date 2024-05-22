@@ -14,6 +14,7 @@ library("sf")
 
 wildschwein <- read_delim("wildschwein_BE_2056.csv", ",")
 
+summary(wildschwein)
 # Careful! What Timezone is assumed?
 sabi <- wildschwein |>
     st_as_sf(coords = c("E", "N"), crs = 2056, remove = FALSE) |> #remove=FALSE is to keep the E & N columns (coords)
@@ -46,7 +47,7 @@ pos[n-1] to pos[n]
 pos[n] to pos[n+1]
 pos[n] to pos[n+2]
 
-##Measure the distance from every point to every other point within this temporal window 
+## Measure the distance from every point to every other point within this temporal window 
 
 We can use the function distance_by_element from week 2 in combination with lead() and lag() to calculate the Euclidean distance. For example, to create the necessary offset of n-2, we use lag(x, 2). For each offset, we create one individual column.
 ```{r}
@@ -106,7 +107,9 @@ sabi_filter
 
 ```
 
-## Preparation
+
+# Strava Excercise
+## Preparation & Task 1: Segmentation
 Import data from strava 
 ```{r}
 library("readr")
@@ -150,8 +153,7 @@ df <- cbind(df, coords)
 df
 ```
 
-## Task 1: Segmentation
-
+### erste visualisierung
 ```{r}
 ggplot(df, aes(X,Y))+
   geom_point()+
@@ -164,9 +166,18 @@ ggplot(df, aes(X,Y))+
 ```
 
 ### define temporal window
+first, define the function for the elements later & now (this needs to be defined to compare the measurements in time)
 ```{r}
-#this step mean is given in m/20 seconds. 
-#define temporal window of 20 secs, partition in 5 sec steps 
+
+  distance_by_element <- function(later, now) {
+  as.numeric(
+    st_distance(later, now, by_element = TRUE)
+  )
+}
+```
+Then, define the frame/window for the step mean. We have running data here, so it makes sense to have a smaller temporal window than 60 minutes. We define a temporal window of 20 secs, partition in 5 sec steps.
+
+```{r}
 #1 time behind, two time behind, (lag) one time ahead, two times ahead  (lead)
 df <- df |>
     mutate(
@@ -175,8 +186,9 @@ df <- df |>
         nPlus5  = distance_by_element(geometry, lead(geometry, 5)), # distance to pos +5 seconds
         nPlus10  = distance_by_element(geometry, lead(geometry, 10))  # distance to pos +10 seconds
     )
-
-#now we add the column stepMean to the DF
+```
+now we add the column stepMean to the DF
+```{r}
 df <- df |>
     rowwise() |>
     mutate(
@@ -184,19 +196,20 @@ df <- df |>
     ) |>
     ungroup()
 ```
+
 ## remove static points: 
 ```{r}
-#here we define the boolean "static" (if we move within a step mean or not)
+# we define the boolean "static" (if we move within a step mean or not)
 df <- df |>
     mutate(static = stepMean < mean(stepMean, na.rm = TRUE))
-# here the mean(stepMean) calculates all the stepMeans, and then compares the current stepMean to it 
 
+# the mean(stepMean) calculates all the stepMeans, and then compares the current stepMean to it 
 df_filter <- df |>
     filter(!static)
-# here, we filter out all the stepMeans that are below the mean of the StepMean
 
 ```
-## Task 2: Specify and apply threshold d
+
+## Task 2: Specify and apply threshold d & EDA
 
 Die punkte, an denen ich mich in 20 sekunden (step mean) weniger bewegt habe als im gesamten StepMean (gsamtes Stepmean= durchschnitt von allen 4er - Distanzen 
 
@@ -207,20 +220,21 @@ Store the new information (boolean to differentiate between stops (TRUE) and mov
 #summary()
 summary(df)
 summary(df_filter)
-#here we can see, that thje min stepMean stepMean 13.22, max stepMean 48,27 (m/?)
+#here we can see, that thje min stepMean stepMean 13.22, max stepMean 48,27 (m/20 sec)
 
 #boxplot
 par(mfrow=c(1,2))
 boxplot(df$stepMean)
 boxplot(df_filter$stepMean)
-# it is interesting to observe the two boxplots, as the filtered one shows the outliers more clearly as such. also, the quartiles are smaller, meaning it is closer to the actual mean speed than the non filtered one. 
-#ACHTUNG - this is stepMean, not actual velocity in km/h - might be calculated from it in a later step?
+```
+it is interesting to observe the two boxplots, as the filtered one shows the outliers more clearly as outliers. also, the quantiles are smaller, meaning it is closer to the actual mean speed than the non filtered one. 
+ACHTUNG - this is the *stepMean*, not actual velocity in km/h - might be calculated from it in a later step?
 
+```{r}
 #histograms
 hist(df$stepMean)
 hist(df_filter$stepMean)
-#here we can see that most of the time I had a StepMean of 20, meaning 20m/20 seconds 
-
+#here we can see that most of the time I had a StepMean of 20, meaning 20m/20 seconds = 1m/sec=3,6 km/hr? isnt that very low for running? Calculus may not be right.
 
 ```
 
@@ -263,60 +277,224 @@ df |>
     theme(legend.position = "bottom")
 
 summary(df)
-#segment ID seems to not be numeric 
-#therefore, first make the column a numeric column 
-df$segment_id <- as.numeric(df$segment_id)
-summary(df)
+
+#at some point i wanted segment_id to be numeric, I dont remember why:
+#df$segment_id <- as.numeric(df$segment_id)
 
 
-
-#define the length of the segments
+#define the length of the segments. 
 df <- df %>%
   group_by(segment_id) %>%
   mutate(segment_length = n()) %>%
   ungroup()
 
+#This funciton calculates the length of the segment_ids, but does not calculate the TIME of the segment, which is what we actually need, as we dont know wether at some point, a segment was interrupted and took longer. 
 
 library(dplyr)
-#seems that first we need to adapt our time format:
+
+#therefore, first we need to adapt our time format:
 df$timestamp <- as.POSIXct(df$timestamp, format = "%Y-%m-%dT%H:%M:%SZ", tz = "UTC")
 
-# here, we makeuse of the difftime function, with substractimng the beginning and end of the segment, thus calculating the length, and then checking wether it is longer than 1 min. For all segments that are shorter than this, we remove them from the calculus. (however I dont think this makes sense at all, why should we remove tracks that are shorter than one minute?)
+# here, we makeuse of the difftime function, with substractimng the beginning and end of the segment, thus calculating the length, and then checking wether it is longer than 1 min. For all segments that are shorter than this, we remove them from the calculus. (however I dont think this makes a lot of sense why we remove tracks that are shorter than one minute)
 df <- df %>%
   group_by(segment_id) %>%
   mutate(duration = difftime(max(timestamp), min(timestamp), units = "secs"),
          duration_less_than_60s = as.logical(duration < 60)) %>%
   ungroup()
 
-df_filter1 <- df1 %>%
+# now we apply the filter to only show the ones longer than 1 min
+df_segments <- df %>%
   filter(!duration_less_than_60s)
 
-x_segment_lengths <- merge(segment_lengths, df[c("segment_id", "X")], by = "segment_id")
+df_segments$segment_id <- as.character(df_segments$segment_id)
 
-new_segment_length |>
+df_segments |>
     ggplot(aes(X, Y, color=segment_id)) +
     geom_path() +
     geom_point() +
     coord_fixed() +
     theme(legend.position = "bottom")
 
+
+
+#install.packages("OpenStreetMap")
+library(OpenStreetMap)
+
+map_tiles <- read_osm(bb(df))
+
+tm_shape(map_tiles) +
+  tm_rgb()+
+  tm_shape(df_segments) +
+  tm_dots(col = "segment_id", size = 0.1, palette = "viridis", shape = 21, border.col = "black", border.lwd = 0.2  )
+  
+# doenst work bc i dont have JAVA isntalled yet, takes too much time. Next time.
+# now it worked
 ```
 
+
+# Pedestrian Excercise
 ## Task 5: Similarity measures (pedestrian)
 ```{r}
+library("readr")
+library("dplyr")
+library(tidyr)
+
+
+pedestrian <- read_delim("pedestrian.csv", ",")
+
+#ped <- pedestrian |>
+    st_as_sf(coords = c("E", "N"), crs = 2056, remove = FALSE) #remove=FALSE is to keep the E & N columns (coords)
+   
+
+ggplot(data = pedestrian, aes(E,N, color = TrajID)) +
+  geom_point(color = pedestrian$TrajID) +
+  facet_wrap(~TrajID, ncol = 3) 
+
+# I wonder why mine is not rectangular and the ones in the solution are? Is it just a Window-Size problem, i dont think so...
+
+
+```
+## Task 6: Calculate Similarity
+### Preparation
+```{r}
+
+traj1 <- pedestrian |> 
+  filter(TrajID==1) |> 
+           subset(select =c(E,N)) |> 
+  as.matrix()
+  
+traj2 <- pedestrian |> 
+  filter(TrajID==2) |> 
+           subset(select =c(E,N)) |> 
+  as.matrix()
+
+traj3 <- pedestrian |> 
+  filter(TrajID==3) |> 
+           subset(select =c(E,N)) |> 
+  as.matrix()
+
+traj4 <- pedestrian |> 
+  filter(TrajID==4) |> 
+           subset(select =c(E,N)) |> 
+  as.matrix()
+
+traj5 <- pedestrian |> 
+  filter(TrajID==5) |> 
+           subset(select =c(E,N)) |> 
+  as.matrix()
+
+traj6 <- pedestrian |> 
+  filter(TrajID==6) |> 
+           subset(select =c(E,N)) |> 
+  as.matrix()
+
+```
+or: 
+```{r}
+trajectory_matrices <- vector("list", length(unique(pedestrian$TrajID)))
+names(trajectory_matrices) <- unique(pedestrian$TrajID)
+
+# Iterate over unique TrajIDs and create matrices
+for (traj_id in unique(pedestrian$TrajID)) {
+  trajectory_matrices[[as.character(traj_id)]] <- pedestrian %>%
+    filter(TrajID == traj_id) %>%
+    select(E, N) %>%
+    as.matrix()
+}
+
+# traj1 <- trajectory_matrices[["1"]]
+
+
+```
+Now compare trajectory 1 to trajectories 2-6 using different similarity measures from the package. Your options are. DTW, EditDist, Frechet and LCSS.
+
+### DTW
+The dynamic time warping algorithm (DTW) calculates the smallest warp path for the two trajectories. 
+```{r}
+install.packages("SimilarityMeasures")
+library(SimilarityMeasures)
+
+# pointSpacing : An integer value of the maximum index difference between trajectory1 and trajectory2 allowed in the calculation. A negative value sets the point spacing to unlimited.
+DTW(traj1, traj2, pointSpacing=-1)
+DTW(traj2, traj3, pointSpacing=-1)
+DTW(traj3, traj4, pointSpacing=-1)
+DTW(traj4, traj5, pointSpacing=-1)
+DTW(traj5, traj6, pointSpacing=-1)
+
+#question: what does it mean, maximum index difference, and how is it different to the max distance in Edit Dist?
+```
+With DTW, you can only compare two trajectories at a time. That is boring.
+ChatGPT says: "So while the basic DTW operates on pairs of trajectories, it can be used as a building block or combined with other techniques to enable similarity analysis across multiple trajectories simultaneously." with K means and clustering, it is possible. 
+As for similarity measures specifically designed to compare multiple trajectories together, some options mentioned include:
+1. Longest Common Subsequence (LCSS) 
+2. Edit Distance on Real Sequence (EDR) 
+3. Edit Distance with Real Penalty (ERP) 
+
+
+### automatisation ABORT!!! 
+dont use this, it aborts the whole session. But how is it then possible to store the values in the matrix?
+```{r}
+#install.packages("TraMineR")
+library(SimilarityMeasures)
+
+
+# Assuming you have the six matrices stored as traj1, traj2, ..., traj6
+trajectories <- list(traj1, traj2, traj3, traj4, traj5, traj6)
+
+# Create an empty matrix to store the similarity scores
+similarity_matrix <- matrix(nrow = length(trajectories), ncol = length(trajectories))
+rownames(similarity_matrix) <- paste0("traj", 1:length(trajectories))
+colnames(similarity_matrix) <- paste0("traj", 1:length(trajectories))
+
+# Compute the similarity scores using nested loops
+for (i in 1:(length(trajectories) - 1)) {
+  for (j in (i + 1):length(trajectories)) {
+    similarity_score <- EditDist(trajectories[[i]], trajectories[[j]], pointDistance = 20)
+    similarity_matrix[i, j] <- similarity_score
+    similarity_matrix[j, i] <- similarity_score
+  }
+}
+
+# Fill the diagonal with 1 (similarity of a trajectory with itself)
+diag(similarity_matrix) <- 1
+
+# Print the similarity matrix
+print(similarity_matrix)
 
 ```
 
 
+
+### EditDist
+```{r}
+# pointDistance: A floating point number representing the maximum distance in each dimension allowed for points to be considered equivalent.
+EditDist(traj1, traj2, pointDistance=20)
+EditDist(traj2, traj3, pointDistance=20)
+EditDist(traj3, traj4, pointDistance=20)
+EditDist(traj4, traj5, pointDistance=20)
+EditDist(traj5, traj6, pointDistance=20)
+EditDist(traj6, traj2, pointDistance=20)
+
+
+```
+### Frechet
 ```{r}
 
 ```
 
+
+Before visualizing your results think about the following: Which two trajectories to you percieve to be most similar, which are most dissimilar? Now visualize the results from the computed similarity measures. Which measure reflects your own intuition the closest?
 ```{r}
 
 ```
 
 
+
+
+
+
+
+## Other Basemaps 
 ```{r}
 plot(x = df$lon, y = df$lat, type = "l", col = "black", lwd = 3,
      xlab = "Longitude", ylab = "Latitude")
